@@ -1,0 +1,21 @@
+{
+  "name": "Node Conquest",
+  "genre": "strategy",
+  "dim": "2D",
+  "mode": "Versus",
+  "players": "2–6",
+  "hook": "Grow troops, send them out, take the whole map.",
+  "how": "Your bases grow troops on their own. Drag from one of your bases to any other to send half its troops: more than the defenders and it's yours. Knock everyone off the map, or have the most troops when the clock runs out.",
+  "controls": "Drag from your base to a target (sweep over more of your bases to send from all), or tap your base then tap the target",
+  "uses": [
+    ["Host-run rules", "The host's browser grows every base, marches every troop and decides every capture; if it leaves, the next player takes over."],
+    ["Bots", "Bots take the empty seats, and a friend who joins takes over a bot that is still in the fight."],
+    ["Live sync", "Everyone sees the same map, about 10 updates a second, with marching troops kept smooth in between."],
+    ["Leaderboard", "Most wins, shown after every match."]
+  ],
+  "ideas": [
+    "Add a tower base that shoots troops marching past",
+    "Make it a space map with planets instead of bases",
+    "Let players upgrade a base to grow faster"
+  ]
+}

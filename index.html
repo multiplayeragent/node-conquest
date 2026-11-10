@@ -1,0 +1,710 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Node Conquest</title>
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: none; background: #0c1322; }
+  body { font: 15px/1.3 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; color: #fff; user-select: none; -webkit-user-select: none; }
+  canvas { display: block; width: 100vw; height: 100vh; height: 100dvh; touch-action: none; }
+  #top { position: fixed; top: max(8px, env(safe-area-inset-top)); left: 50%; transform: translateX(-50%); width: min(620px, calc(100vw - 24px)); pointer-events: none; }
+  #bar { display: flex; height: 12px; border-radius: 6px; overflow: hidden; background: #ffffff14; box-shadow: 0 2px 10px #0008; }
+  #bar i { display: block; height: 100%; transition: width .45s ease; }
+  #row { display: flex; align-items: flex-start; gap: 8px; margin-top: 6px; }
+  #chips { flex: 1; display: flex; flex-wrap: wrap; gap: 4px 10px; font-size: 12px; font-weight: 700; text-shadow: 0 1px 2px #000; }
+  #chips span { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; } #chips span.out { opacity: .35; text-decoration: line-through; }
+  #chips b { width: 9px; height: 9px; border-radius: 50%; background: var(--c); box-shadow: 0 0 6px var(--c); }
+  #chips span.me { color: #ffe08a; }
+  #clock { font: 800 15px system-ui, sans-serif; font-variant-numeric: tabular-nums; padding: 1px 10px; border-radius: 999px; background: #0009; }
+  #count { position: fixed; inset: 0; display: grid; place-items: center; font-size: min(22vw, 150px); font-weight: 900; text-shadow: 0 6px 0 #0007; pointer-events: none; }
+  #hint { position: fixed; left: 50%; bottom: calc(max(10px, env(safe-area-inset-bottom)) + 30px); transform: translateX(-50%); max-width: calc(100vw - 32px); box-sizing: border-box;
+          background: #000b; padding: 8px 16px; border-radius: 999px; font-size: 14px; text-align: center; pointer-events: none; transition: opacity .5s; }
+  #banner { position: fixed; left: 50%; top: 40%; transform: translateX(-50%); padding: 10px 18px; border-radius: 14px; background: #000c; font-weight: 800; text-align: center; pointer-events: none; }
+  #banner[hidden] { display: none; }
+  #net { position: fixed; bottom: max(6px, env(safe-area-inset-bottom)); left: 10px; font-size: 12px; opacity: .75; pointer-events: none; white-space: nowrap; text-shadow: 0 1px 2px #000; }
+  #over { position: fixed; inset: 0; display: grid; place-items: center; background: #0009; }
+  #over[hidden] { display: none; }
+  .box { box-sizing: border-box; width: min(380px, calc(100vw - 32px)); max-height: 86vh; overflow: auto; padding: 20px; border-radius: 18px; background: #141d33; border: 1px solid #ffffff22; text-align: center; }
+  .box h2 { margin: 0 0 4px; font-size: 26px; } .box p { margin: 0 0 12px; opacity: .85; }
+  .box h3 { margin: 6px 0 4px; font-size: 13px; color: #ffd166; text-align: left; }
+  .box ol { text-align: left; margin: 0 0 12px; padding-left: 24px; font-size: 14px; min-height: 30px; } .box li span { float: right; }
+  .box button { width: 100%; min-height: 48px; border: 0; border-radius: 12px; background: #ffd166; color: #2a1d00; font: 800 16px system-ui, sans-serif; cursor: pointer; }
+  .box small { display: block; margin-top: 8px; opacity: .6; font-size: 12px; }
+</style>
+<script src="https://cdn.multiplayeragent.com/sdk/mp.global.js"></script>
+</head>
+<body>
+<canvas id="game"></canvas>
+<div id="top"><div id="bar"></div><div id="row"><div id="chips"></div><span id="clock">3:00</span></div></div>
+<div id="count"></div>
+<div id="banner" hidden></div>
+<div id="hint">Drag from your base to another base to send half its troops</div>
+<div id="net">Connecting…</div>
+<div id="over" hidden><div class="box">
+  <h2 id="overTitle"></h2><p id="overSub"></p>
+  <h3>Most wins</h3><ol id="board"><li>Loading…</li></ol>
+  <button id="again">Play again</button><small id="next"></small>
+</div></div>
+<script>
+/* ═══ NODE CONQUEST · a Multiplayer Agent starter ═════════════════════════════════════════
+ * Grow troops, send them out, take every base on the map. Versus, 2–6 players; bots take the empty seats.
+ *
+ * WHERE THINGS ARE (search for the "── " headers):
+ *   CONFIG ........ match length, troop growth, march speed, base sizes, bots
+ *   CONNECTION .... MP_CONNECT, joining, the offline room, who is host
+ *   MAP ........... building a random map of bases (the host does it once per match)
+ *   WAR (HOST) .... troop growth, marching groups, captures, the bots, seats and the match end.
+ *                   Only the host runs this and writes the shared fields.
+ *   VIEW .......... what everyone draws: the host's live war, or the last snapshot eased forward
+ *   DRAW .......... the map (stood up on portrait screens), bases, marching troops, effects
+ *   HUD & RESULTS . power bar, clock, results card, leaderboard
+ *   INPUT ......... drag (or tap, then tap) from your bases to a target
+ *
+ * HOW THE MULTIPLAYER WORKS (a relay room: no server code):
+ *   - `match` (one JSON field: id, v, phase, startAt, endsAt, seats, winner, why) and `map`
+ *     (this match's bases: x, y, size) are written by the HOST only, once per change.
+ *   - `w` (the war, packed: every base's owner and troops, every marching group with its
+ *     progress) is written by the HOST about 10 times a second. Others move the marching
+ *     troops forward on their own between snapshots, so nothing steps.
+ *   - The HOST is the lowest sessionId among live players (heartbeat seen in the last 3s). It
+ *     grows the troops, marches the groups, resolves every capture and plays every bot. A new
+ *     host adopts the last `w`, catches it up to the clock and carries on.
+ *   - Each player writes its OWN entity: `n` (name), `c` (color), `hb` (heartbeat).
+ *   - To attack, a player sends the intent "send" {m, from: [base…], to}; the host checks each
+ *     base is that player's and sends half its troops. "again" {m} = Play again.
+ *   - seats[k] = {i: sessionId or "bot…", n, c, b}. A friend who joins takes over a bot that is
+ *     still in the fight; a player who leaves hands their seat to a bot.
+ *   - ?attract plays offline, six bots (the preview video is recorded from it).
+ *   - Leaderboard "wins": +1 for each match a player wins, shown on the results card.
+ */
+
+// ── CONFIG ──────────────────────────────────────────────────────────────────────────
+const CONFIG = {
+  seats: 4,             // players on the map; bots fill the empty seats (2 to 6)
+  matchMs: 180000,      // a match lasts 3 minutes, then the most troops wins
+  countdownMs: 3000,    // 3, 2, 1 before troops can move
+  resultsMs: 12000,     // the results card shows this long, then a new map
+  startTroops: 20,      // troops on each player's first base
+  neutralMin: 6,        // troops on an empty base at the start: between these two,
+  neutralMax: 22,       //   times 1 / 1.5 / 2 for the three base sizes
+  sendShare: 0.5,       // a drag sends this share of each chosen base's troops
+  speed: 115,           // troops march this many map units a second (the map is 1600 x 1000)
+  maxGroups: 40,        // marching groups on the map at once
+  decayMs: 800,         // a base over its cap loses one troop this often
+  botThinkMs: 1500,     // each bot looks at the map about this often
+  botMinTroops: 10,     // a bot only sends from bases holding at least this many
+  seatGraceMs: 6000,    // a player silent this long hands their seat to a bot
+  board: "wins",        // leaderboard name
+  // The three base sizes: r = radius in map units, cap = most troops it grows to, growMs = +1 troop this often.
+  sizes: [
+    { name: "Outpost", r: 40, cap: 40,  growMs: 1150 },
+    { name: "Town",    r: 50, cap: 70,  growMs: 820 },
+    { name: "Citadel", r: 62, cap: 110, growMs: 580 },
+  ],
+};
+const COLORS = ["#4f8cff", "#ff5a5f", "#3ecf7a", "#ffc23d", "#b77bff", "#ff8a3d", "#2fd4d4", "#ff6fb5"];
+const GREY = "#7d8799";
+const BOT_NAMES = ["Ada", "Bram", "Cleo", "Dax", "Echo", "Fern", "Gus", "Hana"];
+const NAME_A = ["Swift", "Iron", "Bold", "Lucky", "Sly", "Grand"], NAME_B = ["General", "Marshal", "Warlord", "Captain", "Admiral", "Baron"];
+
+// ── CONNECTION ──────────────────────────────────────────────────────────────────────
+// The builder fills these in for this game. Downloaded from GitHub? Put your own pk_ key here.
+const MP_CONNECT = {
+  key: 'pk_REPLACE_ME',
+  room: 'node-conquest',
+  endpoint: 'wss://live.multiplayeragent.com',
+  apiUrl: 'https://api.multiplayeragent.com',
+};
+const ATTRACT = new URLSearchParams(location.search).has("attract");
+
+/** Same shape as the SDK client, kept in this tab: offline play and ?attract. */
+function localRoom() {
+  const id = "local", state = { entities: { players: { [id]: {} } }, shared: {} }, subs = [];
+  let queued = false;
+  const emit = () => { if (!queued) { queued = true; queueMicrotask(() => { queued = false; subs.forEach((f) => f(state)); }); } };
+  const put = (o, k, v) => { if (typeof k === "object") Object.assign(o, k); else o[k] = v; emit(); };
+  return {
+    sessionId: id, state, offline: true,
+    me: { set: (k, v) => put(state.entities.players[id], k, v) },
+    setShared: (k, v) => put(state.shared, k, v),
+    onState: (f) => { subs.push(f); f(state); }, onJoin() {}, onLeave() {}, on() {}, send() {},
+    onDisconnect() {}, onReconnect() {}, leave: async () => {},
+  };
+}
+async function connect() {
+  if (ATTRACT || typeof MP === "undefined") return localRoom();
+  try {
+    const mp = await Promise.race([MP.join({ ...MP_CONNECT }), new Promise((_, no) => setTimeout(() => no(new Error("timed out")), 10000))]);
+    window.mp = mp; // the builder calls window.mp.leave() when the page closes
+    return mp;
+  } catch (e) {
+    console.warn("Playing offline:", e && e.message);
+    return localRoom();
+  }
+}
+const parse = (v, fb) => { if (typeof v !== "string") return fb; try { return JSON.parse(v); } catch { return fb; } };
+const memo = new Map();
+/** A shared JSON field, parsed once per change (read-only: never mutate what this returns). */
+function shared(key, fallback) {
+  const raw = S.shared[key], m = memo.get(key);
+  if (m && m.raw === raw) return m.v;
+  const v = parse(raw, fallback);
+  memo.set(key, { raw, v, at: performance.now() });
+  return v;
+}
+let net = null, S = { entities: { players: {} }, shared: {} };
+const seenHb = new Map();
+/** Players whose heartbeat moved in the last 3s (plus us), sorted by sessionId. */
+function livePlayers() {
+  const now = performance.now(), out = [];
+  for (const [id, p] of Object.entries(S.entities.players || {})) {
+    const s = seenHb.get(id);
+    if (!s || s.hb !== p.hb) seenHb.set(id, { hb: p.hb, at: now });
+    if (id === net.sessionId || now - seenHb.get(id).at < 3000) out.push(id);
+  }
+  return out.sort();
+}
+const isHost = () => livePlayers()[0] === net.sessionId;
+const stillHere = (id) => id === net.sessionId || (!!S.entities.players[id] && performance.now() - (seenHb.get(id)?.at ?? -1e9) < CONFIG.seatGraceMs);
+
+// ── MAP ─────────────────────────────────────────────────────────────────────────────
+// Map units: x 0..1600, y 0..1000. Each base is { x, y, t (size 0/1/2), home (seat or -1), start (troops) }.
+const MAP = { w: 1600, h: 1000 };
+const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
+const rnd = (a, b) => a + Math.random() * (b - a);
+/** A fresh random map: one home base per seat around the edge, empty bases everywhere else. */
+function makeMap(seats) {
+  const bases = [], off = Math.random() * Math.PI * 2;
+  for (let s = 0; s < seats; s++) {
+    const a = off + (s / seats) * Math.PI * 2;
+    bases.push({ x: Math.round(MAP.w / 2 + Math.cos(a) * MAP.w * 0.39), y: Math.round(MAP.h / 2 + Math.sin(a) * MAP.h * 0.37), t: 1, home: s, start: CONFIG.startTroops });
+  }
+  const want = 8 + seats * 3;
+  for (let tries = 0; bases.length < want && tries < 5000; tries++) {
+    const x = rnd(80, MAP.w - 80), y = rnd(80, MAP.h - 80), gap = tries < 3000 ? 180 : 150;
+    if (bases.some((b) => dist(b, { x, y }) < gap)) continue;
+    const central = 1 - Math.min(1, Math.hypot((x - MAP.w / 2) / (MAP.w / 2), (y - MAP.h / 2) / (MAP.h / 2)));
+    const roll = Math.random() + central * 0.45, t = roll > 1.05 ? 2 : roll > 0.62 ? 1 : 0;
+    bases.push({ x: Math.round(x), y: Math.round(y), t, home: -1, start: Math.round(rnd(CONFIG.neutralMin, CONFIG.neutralMax) * (1 + t * 0.5)) });
+  }
+  return bases;
+}
+const mapMemo = { raw: undefined, list: null };
+/** This match's bases, from the host's own copy or the shared `map` field. */
+function mapOf(m) {
+  if (!m) return null;
+  if (isHost() && world.matchId === m.id && world.map.length) return world.map;
+  const raw = S.shared.map;
+  if (raw !== mapMemo.raw) {
+    mapMemo.raw = raw;
+    const d = parse(raw, null);
+    mapMemo.list = d && Array.isArray(d.b) ? { m: d.m, b: d.b.map(([x, y, t, home, start]) => ({ x, y, t, home, start })) } : null;
+  }
+  return mapMemo.list && mapMemo.list.m === m.id ? mapMemo.list.b : null;
+}
+
+// ── WAR (HOST) ──────────────────────────────────────────────────────────────────────
+const STEP = 0.05; // the war moves in 50ms steps
+const host = { last: null, again: new Set() };
+const world = { matchId: -1, map: [], own: [], cnt: [], groups: [], nextId: 1, acc: 0, lastTick: 0, lastWrite: 0, wasHost: false, bots: {} };
+/** The match as state has it, or the host's own newer write that hasn't come back yet. */
+function match() {
+  const m = shared("match", null);
+  return host.last && isHost() && (!m || host.last.v > m.v) ? host.last : m;
+}
+function writeMatch(m) { m = { ...m, v: (match()?.v ?? 0) + 1 }; host.last = m; net.setShared("match", JSON.stringify(m)); return m; }
+const colorOf = (id) => (id === net.sessionId ? myColor : S.entities.players[id]?.c || COLORS[0]);
+const nameOf = (id) => (id === net.sessionId ? myName : S.entities.players[id]?.n || "Player");
+/** A new match: the live players first, bots up to CONFIG.seats, a fresh map. */
+function newMatch(id) {
+  const humans = ATTRACT ? [] : livePlayers().slice(0, 6), seats = [], used = new Set();
+  for (const h of humans) { let c = colorOf(h); if (used.has(c)) c = COLORS.find((x) => !used.has(x)); used.add(c); seats.push({ i: h, n: nameOf(h), c, b: 0 }); }
+  for (let k = 0; seats.length < Math.max(2, Math.min(6, Math.max(CONFIG.seats, humans.length))); k++) {
+    const c = COLORS.find((x) => !used.has(x)); used.add(c);
+    seats.push({ i: "bot" + k, n: BOT_NAMES[k], c, b: 1 });
+  }
+  for (let i = seats.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [seats[i], seats[j]] = [seats[j], seats[i]]; } // random home spots
+  const map = makeMap(seats.length), t = Date.now();
+  resetWorld(id, map);
+  net.setShared("map", JSON.stringify({ m: id, b: map.map((b) => [b.x, b.y, b.t, b.home, b.start]) }));
+  host.again.clear();
+  return writeMatch({ id, phase: "play", startAt: t + CONFIG.countdownMs, endsAt: t + CONFIG.countdownMs + CONFIG.matchMs, seats, winner: -1, why: "" });
+}
+function resetWorld(id, map) {
+  Object.assign(world, { matchId: id, map, own: map.map((b) => b.home), cnt: map.map((b) => b.start), groups: [], nextId: 1, bots: {} });
+}
+/** Become host: take the war over exactly as the last `w` has it, caught up to now. */
+function adoptWorld(m) {
+  const map = mapOf(m) || [], w = shared("w", null);
+  resetWorld(m.id, map.map((b) => ({ ...b })));
+  if (!w || w.m !== m.id) return;
+  world.own = w.o.slice(); world.cnt = w.c.slice();
+  world.groups = w.g.map(([id, s, a, b, n, p]) => ({ id, s, a, b, n, p: p / 1000, d: dist(map[a], map[b]) }));
+  world.nextId = Math.max(0, ...world.groups.map((g) => g.id)) + 1;
+  if (m.phase !== "play") return;
+  const behind = Math.max(0, Math.min(5, (Date.now() - Math.max(w.t, m.startAt)) / 1000)); // a frozen host left a gap
+  for (let k = 0; k < behind / STEP; k++) warStep(STEP);
+}
+/** A "send" intent (or the host's own drag, or a bot): half of each chosen base marches to `to`. */
+function applySend(seat, d) {
+  const m = match(), map = world.map;
+  if (!m || !d || m.phase !== "play" || d.m !== m.id || Date.now() < m.startAt || seat < 0) return false;
+  const to = Math.floor(+d.to);
+  if (!(to >= 0 && to < map.length) || !Array.isArray(d.from)) return false;
+  let sent = 0;
+  for (const a of [...new Set(d.from.map(Number))].slice(0, 12)) {
+    if (a === to || world.own[a] !== seat || world.groups.length >= CONFIG.maxGroups) continue;
+    const n = Math.floor(world.cnt[a] * CONFIG.sendShare);
+    if (n < 1) continue;
+    world.cnt[a] -= n;
+    world.groups.push({ id: world.nextId++, s: seat, a, b: to, n, p: 0, d: dist(map[a], map[to]) });
+    sent++;
+  }
+  return sent > 0;
+}
+/** One step of the war: bases grow (or shrink back to their cap), groups march and land. */
+function warStep(dt) {
+  const map = world.map;
+  for (let i = 0; i < map.length; i++) {
+    if (world.own[i] < 0) continue;
+    const Z = CONFIG.sizes[map[i].t];
+    if (world.cnt[i] < Z.cap) world.cnt[i] = Math.min(Z.cap, world.cnt[i] + (dt * 1000) / Z.growMs);
+    else world.cnt[i] = Math.max(Z.cap, world.cnt[i] - (dt * 1000) / CONFIG.decayMs);
+  }
+  for (const g of world.groups) g.p += (dt * CONFIG.speed) / Math.max(1, g.d);
+  for (const g of world.groups.filter((g) => g.p >= 1)) land(g);
+  world.groups = world.groups.filter((g) => g.p < 1);
+}
+/** A group reaches its target: reinforce your own base, or fight; more than they have = it's yours. */
+function land(g) {
+  if (world.own[g.b] === g.s) { world.cnt[g.b] += g.n; return; }
+  world.cnt[g.b] -= g.n;
+  if (world.cnt[g.b] < 0) { world.own[g.b] = g.s; world.cnt[g.b] = -world.cnt[g.b]; }
+}
+/** Troops, bases and groups for each seat. A seat with no base and no group is out. */
+function tally(own, cnt, groups, seats) {
+  const out = Array.from({ length: seats }, () => ({ troops: 0, bases: 0, groups: 0 }));
+  own.forEach((o, i) => { if (o >= 0 && out[o]) { out[o].troops += cnt[i]; out[o].bases++; } });
+  for (const g of groups) if (out[g.s]) { out[g.s].troops += g.n; out[g.s].groups++; }
+  return out.map((x) => ({ ...x, troops: Math.floor(x.troops), alive: x.bases > 0 || x.groups > 0 }));
+}
+/** The match ends when one seat is left, when every person is out, or when time runs out. */
+function checkEnd(m, t) {
+  if (!m || m.phase !== "play" || t < m.startAt) return;
+  const tl = tally(world.own, world.cnt, world.groups, m.seats.length), alive = tl.map((x, k) => (x.alive ? k : -1)).filter((k) => k >= 0);
+  const most = () => { const top = Math.max(...alive.map((k) => tl[k].troops)), lead = alive.filter((k) => tl[k].troops === top); return lead.length === 1 ? lead[0] : -2; };
+  const people = m.seats.some((s) => !s.b), peopleIn = m.seats.some((s, k) => !s.b && tl[k].alive);
+  let winner = null, why = "";
+  if (alive.length <= 1) { winner = alive.length ? alive[0] : -2; why = "Knocked everyone off the map"; }
+  else if (people && !peopleIn && !ATTRACT) { winner = most(); why = "Every player was knocked out"; }
+  else if (t >= m.endsAt) { winner = most(); why = winner === -2 ? "Dead even on troops" : "Most troops when time ran out"; }
+  if (winner === null) return;
+  writeMatch({ ...m, phase: "over", winner, why, endsAt: t + CONFIG.resultsMs });
+}
+/** Gone players hand their seat to a bot; a waiting player takes over a bot still in the fight. */
+function fixSeats(m) {
+  if (ATTRACT) return m;
+  const seats = m.seats.map((s) => ({ ...s })), waiting = livePlayers().filter((id) => !seats.some((s) => s.i === id));
+  const tl = tally(world.own, world.cnt, world.groups, seats.length);
+  let changed = false;
+  seats.forEach((s, k) => {
+    if (!s.b && !stillHere(s.i)) { Object.assign(s, { i: `bot-${m.id}-${k}`, n: BOT_NAMES.find((b) => !seats.some((x) => x.n === b)) || "Bot", b: 1 }); changed = true; }
+    else if (s.b && waiting.length && m.phase === "play" && tl[k].alive) { const id = waiting.shift(); Object.assign(s, { i: id, n: nameOf(id), b: 0 }); changed = true; }
+    else if (!s.b && S.entities.players[s.i]?.n && s.n !== nameOf(s.i)) { s.n = nameOf(s.i); changed = true; } // their name arrived after they sat down
+  });
+  return changed ? writeMatch({ ...m, seats }) : m;
+}
+/** A bot: take the juiciest base it can beat, else move a full base's troops toward the front. */
+function botTick(k, m, now) {
+  const b = world.bots[k] || (world.bots[k] = { nextAt: now + rnd(400, 1400) });
+  if (now < b.nextAt) return;
+  b.nextAt = now + CONFIG.botThinkMs * rnd(0.6, 1.4);
+  const map = world.map, mine = map.map((_, i) => i).filter((i) => world.own[i] === k);
+  if (!mine.length) return;
+  const coming = new Map();
+  for (const g of world.groups) if (g.s === k) coming.set(g.b, (coming.get(g.b) || 0) + g.n);
+  let best = null;
+  for (let to = 0; to < map.length; to++) {
+    if (world.own[to] === k) continue;
+    const enemy = world.own[to] >= 0, near = mine.filter((i) => world.cnt[i] >= CONFIG.botMinTroops).sort((a, c) => dist(map[a], map[to]) - dist(map[c], map[to]));
+    let sum = 0;
+    for (let n = 1; n <= Math.min(3, near.length); n++) {
+      sum += Math.floor(world.cnt[near[n - 1]] * CONFIG.sendShare);
+      const secs = dist(map[near[n - 1]], map[to]) / CONFIG.speed;
+      const need = world.cnt[to] + (enemy ? (secs * 1000) / CONFIG.sizes[map[to].t].growMs : 0) + 2 - (coming.get(to) || 0);
+      if (sum <= need) continue;
+      const score = map[to].t * 5 + (enemy ? 1 : 4) - secs * 2.5 - n * 2 - (coming.get(to) ? 6 : 0) + Math.min(6, (sum - need) * 0.15) + rnd(0, 5);
+      if (!best || score > best.score) best = { score, from: near.slice(0, n), to };
+      break;
+    }
+  }
+  if (best) { applySend(k, { m: m.id, from: best.from, to: best.to }); return; }
+  const full = mine.filter((i) => world.cnt[i] >= CONFIG.sizes[map[i].t].cap * 0.85);
+  const others = map.map((_, i) => i).filter((i) => world.own[i] !== k);
+  if (!full.length || mine.length < 2 || !others.length) return;
+  const front = (i) => Math.min(...others.map((o) => dist(map[i], map[o])));
+  const to = mine.filter((i) => !full.includes(i)).sort((a, c) => front(a) - front(c))[0];
+  if (to !== undefined) applySend(k, { m: m.id, from: [full[0]], to });
+}
+/** Everyone who is still here asked for a rematch. */
+function againReady(m) {
+  const people = m.seats.filter((s) => !s.b && stillHere(s.i)).map((s) => s.i);
+  return people.length > 0 && people.every((id) => host.again.has(id));
+}
+function hostTick(now) {
+  let m = match();
+  const t = Date.now();
+  if (!m || !mapOf(m)) m = newMatch((m?.id ?? 0) + 1);
+  if (!world.wasHost || world.matchId !== m.id) { world.wasHost = true; world.lastTick = now; adoptWorld(m); } // a new host carries on from the last `w`
+  m = fixSeats(m);
+  if (m.phase === "over") { if (t > m.endsAt || againReady(m)) newMatch(m.id + 1); return; }
+  world.acc += Math.max(0, Math.min(0.25, (now - world.lastTick) / 1000)); world.lastTick = now; // real time, so a slow host doesn't slow the war
+  while (world.acc >= STEP) { world.acc -= STEP; if (Date.now() >= m.startAt) warStep(STEP); }
+  if (t >= m.startAt) m.seats.forEach((s, k) => { if (s.b) botTick(k, m, now); });
+  checkEnd(match(), t);
+  if (now - world.lastWrite > 100) { // ~10 times a second: the whole war in one field
+    world.lastWrite = now;
+    net.setShared("w", JSON.stringify({ m: world.matchId, t: Date.now(), o: world.own, c: world.cnt.map((c) => Math.floor(c)),
+      g: world.groups.map((g) => [g.id, g.s, g.a, g.b, g.n, Math.round(g.p * 1000)]) }));
+  }
+}
+function hostAgain(from, d) { const m = match(); if (m && m.phase === "over" && d && d.m === m.id && m.seats.some((s) => s.i === from)) host.again.add(from); }
+
+// ── VIEW ────────────────────────────────────────────────────────────────────────────
+// What everyone draws: { own, cnt, groups: [{id, s, a, b, n, p}] }. The host reads its live war;
+// everyone else reads the last `w` and keeps the marching groups moving between snapshots.
+const groupViews = new Map();
+function viewOf(m, map, dt) {
+  if (isHost() && world.matchId === m.id) return { own: world.own, cnt: world.cnt, groups: world.groups };
+  const w = shared("w", null);
+  if (!w || w.m !== m.id) return { own: map.map((b) => b.home), cnt: map.map((b) => b.start), groups: [] };
+  const since = (performance.now() - (memo.get("w")?.at ?? performance.now())) / 1000, k = 1 - Math.pow(0.002, dt), seen = new Set();
+  const groups = [];
+  for (const [id, s, a, b, n, p] of w.g) {
+    if (!map[a] || !map[b]) continue;
+    const d = dist(map[a], map[b]), want = Math.min(1, p / 1000 + (m.phase === "play" ? (since * CONFIG.speed) / d : 0));
+    let v = groupViews.get(id);
+    if (!v) { v = { id, s, a, b, n, p: want, d }; groupViews.set(id, v); }
+    v.p = Math.min(1, v.p + (dt * CONFIG.speed) / d); v.p += (want - v.p) * k; v.n = n;
+    seen.add(id); groups.push(v);
+  }
+  for (const id of groupViews.keys()) if (!seen.has(id)) groupViews.delete(id);
+  return { own: w.o, cnt: w.c, groups };
+}
+
+// ── DRAW ────────────────────────────────────────────────────────────────────────────
+const cv = document.getElementById("game"), ctx = cv.getContext("2d"), bgCv = document.createElement("canvas");
+let W = 0, H = 0, DPR = 1, SC = 1, OX = 0, OY = 0, ROT = false, viewKey = "";
+/** Fit the map: landscape screens lay it flat, portrait screens stand it up. */
+function layout() {
+  const key = innerWidth + "x" + innerHeight;
+  if (key === viewKey) return;
+  viewKey = key;
+  DPR = Math.min(2, devicePixelRatio || 1); W = innerWidth; H = innerHeight; cv.width = W * DPR; cv.height = H * DPR;
+  ROT = H > W * 1.05;
+  const top = ATTRACT ? 26 : W < 520 ? 74 : 58, bottom = ATTRACT ? 8 : 28, fw = ROT ? MAP.h : MAP.w, fh = ROT ? MAP.w : MAP.h;
+  SC = Math.min((W - 16) / fw, (H - top - bottom) / fh);
+  OX = (W - fw * SC) / 2; OY = top + (H - top - bottom - fh * SC) / 2;
+  paintBackground();
+}
+addEventListener("resize", () => { viewKey = ""; }); addEventListener("orientationchange", () => { viewKey = ""; });
+const toScreen = (x, y) => (ROT ? [OX + (MAP.h - y) * SC, OY + x * SC] : [OX + x * SC, OY + y * SC]);
+/** The night-blue board with a dot grid, painted once per layout. */
+function paintBackground() {
+  bgCv.width = cv.width; bgCv.height = cv.height;
+  const c = bgCv.getContext("2d");
+  c.setTransform(DPR, 0, 0, DPR, 0, 0);
+  const g = c.createRadialGradient(W / 2, H / 2, 0, W / 2, H / 2, Math.max(W, H) * 0.7);
+  g.addColorStop(0, "#18233d"); g.addColorStop(1, "#0a101d");
+  c.fillStyle = g; c.fillRect(0, 0, W, H);
+  const [x0, y0] = toScreen(0, 0), [x1, y1] = toScreen(MAP.w, MAP.h), L = Math.min(x0, x1), T = Math.min(y0, y1), R = Math.max(x0, x1), B = Math.max(y0, y1);
+  c.fillStyle = "#ffffff05"; c.beginPath(); c.roundRect ? c.roundRect(L - 8, T - 8, R - L + 16, B - T + 16, 18) : c.rect(L - 8, T - 8, R - L + 16, B - T + 16); c.fill();
+  c.fillStyle = "#ffffff12";
+  const step = 50 * SC;
+  for (let x = L; x <= R + 1; x += step) for (let y = T; y <= B + 1; y += step) c.fillRect(x - 1, y - 1, 2, 2);
+}
+const sparks = [], rings = [], pops = [];
+const fx = { own: null, cnt: null, groups: new Map(), shake: [] };
+function burst(x, y, color, n, speed) { for (let i = 0; i < n; i++) { const a = Math.random() * Math.PI * 2, v = speed * (0.3 + Math.random()); sparks.push({ x, y, vx: Math.cos(a) * v, vy: Math.sin(a) * v, life: 0.5 + Math.random() * 0.4, color }); } }
+function pop(text, x, y, color = "#fff") { pops.push({ text, x, y, color, t0: performance.now() }); }
+/** One-off effects worked out from what changed (so the host and everyone else see the same). */
+function effects(m, map, v, now) {
+  const seat = mySeat(m);
+  if (fx.own && fx.own.length === v.own.length) {
+    v.own.forEach((o, i) => {
+      if (o === fx.own[i]) return;
+      const c = seatColor(m, o);
+      rings.push({ x: map[i].x, y: map[i].y, r: CONFIG.sizes[map[i].t].r, color: c, t0: now });
+      burst(map[i].x, map[i].y, c, 26, 260);
+      if (o === seat) { pop("Captured!", map[i].x, map[i].y - 70, "#ffe08a"); sound(660, 0.18, 0.25); }
+      else if (fx.own[i] === seat && seat >= 0) { pop("Lost!", map[i].x, map[i].y - 70, "#ff8a8a"); sound(140, 0.3, 0.25); }
+    });
+  }
+  const ids = new Set(v.groups.map((g) => g.id));
+  for (const [id, g] of fx.groups) if (!ids.has(id) && map[g.b]) { // landed
+    burst(map[g.b].x, map[g.b].y, seatColor(m, g.s), 8, 120);
+    if (v.own[g.b] !== g.s || fx.own?.[g.b] !== g.s) fx.shake[g.b] = now + 160;
+  }
+  fx.groups = new Map(v.groups.map((g) => [g.id, { s: g.s, b: g.b }]));
+  fx.own = v.own.slice();
+}
+const seatColor = (m, s) => (s >= 0 && m.seats[s] ? m.seats[s].c : GREY);
+function draw(m, map, v, dt, now) {
+  layout();
+  ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.drawImage(bgCv, 0, 0);
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  // territory glow under every owned base
+  map.forEach((b, i) => {
+    if (v.own[i] < 0) return;
+    const [X, Y] = toScreen(b.x, b.y), r = CONFIG.sizes[b.t].r * SC * 3.2, g = ctx.createRadialGradient(X, Y, 0, X, Y, r);
+    g.addColorStop(0, seatColor(m, v.own[i]) + "30"); g.addColorStop(1, seatColor(m, v.own[i]) + "00");
+    ctx.fillStyle = g; ctx.beginPath(); ctx.arc(X, Y, r, 0, Math.PI * 2); ctx.fill();
+  });
+  drawArrows(m, map, v, now);
+  for (const g of v.groups) drawGroup(m, map, g, now);
+  map.forEach((b, i) => drawBase(m, b, i, v, now));
+  // sparks, capture rings, text pops (all in map units)
+  for (let i = sparks.length - 1; i >= 0; i--) {
+    const p = sparks[i]; p.life -= dt; p.x += p.vx * dt; p.y += p.vy * dt; p.vx *= 0.94; p.vy *= 0.94;
+    if (p.life <= 0) { sparks.splice(i, 1); continue; }
+    const [X, Y] = toScreen(p.x, p.y), s = Math.max(2, 7 * SC); ctx.globalAlpha = Math.min(1, p.life * 2.2); ctx.fillStyle = p.color; ctx.fillRect(X - s / 2, Y - s / 2, s, s);
+  }
+  for (let i = rings.length - 1; i >= 0; i--) {
+    const r = rings[i], a = (now - r.t0) / 600; if (a >= 1) { rings.splice(i, 1); continue; }
+    const [X, Y] = toScreen(r.x, r.y); ctx.globalAlpha = 1 - a; ctx.strokeStyle = r.color; ctx.lineWidth = 5 * (1 - a) + 1;
+    ctx.beginPath(); ctx.arc(X, Y, (r.r + a * 70) * SC, 0, Math.PI * 2); ctx.stroke();
+  }
+  ctx.globalAlpha = 1;
+  for (let i = pops.length - 1; i >= 0; i--) {
+    const p = pops[i], a = (now - p.t0) / 1200; if (a >= 1) { pops.splice(i, 1); continue; }
+    const [X, Y] = toScreen(p.x, p.y); ctx.globalAlpha = 1 - a * a; ctx.font = `900 ${Math.max(15, 30 * SC)}px system-ui, sans-serif`; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    ctx.lineWidth = 4; ctx.strokeStyle = "#000b"; ctx.strokeText(p.text, X, Y - a * 26); ctx.fillStyle = p.color; ctx.fillText(p.text, X, Y - a * 26);
+  }
+  ctx.globalAlpha = 1;
+}
+function drawBase(m, b, i, v, now) {
+  const Z = CONFIG.sizes[b.t], o = v.own[i], c = seatColor(m, o), n = Math.floor(v.cnt[i]);
+  let [X, Y] = toScreen(b.x, b.y);
+  if (fx.shake[i] > now) { X += (Math.random() - 0.5) * 5; Y += (Math.random() - 0.5) * 5; }
+  const r = Z.r * SC, picked = sel.includes(i), aimed = target === i && sel.length && !picked;
+  ctx.fillStyle = "#0007"; ctx.beginPath(); ctx.ellipse(X, Y + r * 0.22, r * 1.05, r * 0.95, 0, 0, Math.PI * 2); ctx.fill();
+  // body: dark core with a colored rim; Towns get notches, Citadels get battlements
+  if (b.t === 2) {
+    ctx.fillStyle = o >= 0 ? c : "#5c6578"; ctx.beginPath();
+    for (let k = 0; k < 16; k++) { const a = (k / 16) * Math.PI * 2, rr = k % 2 ? r * 1.0 : r * 1.16; ctx.lineTo(X + Math.cos(a) * rr, Y + Math.sin(a) * rr); }
+    ctx.fill();
+  }
+  const g = ctx.createRadialGradient(X - r * 0.3, Y - r * 0.35, r * 0.1, X, Y, r);
+  g.addColorStop(0, o >= 0 ? "#2a3756" : "#2c3240"); g.addColorStop(1, o >= 0 ? "#141c2f" : "#1a1e27");
+  ctx.fillStyle = g; ctx.beginPath(); ctx.arc(X, Y, r * 0.9, 0, Math.PI * 2); ctx.fill();
+  ctx.strokeStyle = c; ctx.lineWidth = Math.max(2.5, r * 0.16); ctx.beginPath(); ctx.arc(X, Y, r * 0.9, 0, Math.PI * 2); ctx.stroke();
+  if (b.t === 1) { ctx.fillStyle = c; for (let k = 0; k < 6; k++) { const a = (k / 6) * Math.PI * 2 + 0.26; ctx.beginPath(); ctx.arc(X + Math.cos(a) * r * 1.07, Y + Math.sin(a) * r * 1.07, Math.max(1.6, r * 0.09), 0, Math.PI * 2); ctx.fill(); } }
+  // how full it is: an arc toward the cap
+  if (o >= 0) { ctx.strokeStyle = "#ffffff55"; ctx.lineWidth = Math.max(1.5, r * 0.07); ctx.beginPath(); ctx.arc(X, Y, r * 0.68, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * Math.min(1, n / Z.cap)); ctx.stroke(); }
+  if (picked || aimed) {
+    ctx.strokeStyle = aimed ? "#ffffffcc" : "#fff"; ctx.lineWidth = 2.5; ctx.setLineDash([6, 5]); ctx.lineDashOffset = -now / 40;
+    ctx.beginPath(); ctx.arc(X, Y, r * 1.3 + Math.sin(now / 150) * 2, 0, Math.PI * 2); ctx.stroke(); ctx.setLineDash([]);
+  }
+  ctx.fillStyle = "#fff"; ctx.font = `800 ${Math.max(12, r * 0.78)}px system-ui, sans-serif`; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+  ctx.fillText(n, X, Y + 1);
+  const seat = mySeat(m);
+  if (o === seat && seat >= 0 && b.home === seat && Date.now() < m.startAt + 4000 && !ATTRACT) {
+    ctx.font = `900 14px system-ui, sans-serif`; ctx.fillStyle = "#ffe08a"; ctx.fillText("YOU", X, Y - r * 1.25 - 6 + Math.sin(now / 160) * 3);
+  }
+}
+/** A marching group: a column of dots in its color, bigger groups longer, with its size on top. */
+function drawGroup(m, map, g, now) {
+  const A = map[g.a], B = map[g.b];
+  if (!A || !B) return;
+  const ux = (B.x - A.x) / g.d, uy = (B.y - A.y) / g.d, head = g.p * g.d, c = seatColor(m, g.s), dots = Math.min(16, 2 + Math.ceil(g.n / 3));
+  ctx.fillStyle = c;
+  for (let j = 0; j < dots; j++) {
+    const along = head - j * 11, side = Math.sin(now / 90 + j * 1.7 + g.id) * 5 * ((j % 3) - 1);
+    if (along < CONFIG.sizes[A.t].r * 0.6) break;
+    const [X, Y] = toScreen(A.x + ux * along - uy * side, A.y + uy * along + ux * side);
+    ctx.beginPath(); ctx.arc(X, Y, Math.max(2, (j === 0 ? 8 : 6.5) * SC), 0, Math.PI * 2); ctx.fill();
+  }
+  if (g.n >= 3) {
+    const [X, Y] = toScreen(A.x + ux * head, A.y + uy * head);
+    ctx.font = `800 ${Math.max(11, 22 * SC)}px system-ui, sans-serif`; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    ctx.lineWidth = 3; ctx.strokeStyle = "#000c"; ctx.strokeText(g.n, X, Y - Math.max(12, 20 * SC)); ctx.fillStyle = "#fff"; ctx.fillText(g.n, X, Y - Math.max(12, 20 * SC));
+  }
+}
+/** While choosing: an arrow from every chosen base to the finger (or to the base under it). */
+function drawArrows(m, map, v, now) {
+  if (!sel.length || !pointer) return;
+  const c = seatColor(m, mySeat(m)), [tx, ty] = target >= 0 ? toScreen(map[target].x, map[target].y) : [pointer.x, pointer.y];
+  ctx.strokeStyle = c; ctx.lineWidth = 4; ctx.lineCap = "round"; ctx.setLineDash([12, 9]); ctx.lineDashOffset = -now / 25;
+  for (const i of sel) {
+    if (i === target) continue;
+    const [X, Y] = toScreen(map[i].x, map[i].y);
+    ctx.beginPath(); ctx.moveTo(X, Y); ctx.lineTo(tx, ty); ctx.stroke();
+  }
+  ctx.setLineDash([]);
+  if (target >= 0) {
+    const r = CONFIG.sizes[map[target].t].r * SC;
+    ctx.fillStyle = c + "44"; ctx.beginPath(); ctx.arc(tx, ty, r * 1.35, 0, Math.PI * 2); ctx.fill();
+  }
+}
+let actx = null, lastSound = 0; // sounds start after the first tap (browsers require it)
+function sound(freq, len, vol = 0.15) {
+  const now = performance.now();
+  if (!actx || ATTRACT || now - lastSound < 60) return;
+  lastSound = now;
+  const t = actx.currentTime, o = actx.createOscillator(), g = actx.createGain();
+  o.type = "triangle"; o.frequency.setValueAtTime(freq, t); o.frequency.exponentialRampToValueAtTime(Math.max(40, freq * 1.5), t + len);
+  g.gain.setValueAtTime(vol * 0.5, t); g.gain.exponentialRampToValueAtTime(0.001, t + len + 0.05);
+  o.connect(g).connect(actx.destination); o.start(t); o.stop(t + len + 0.08);
+}
+
+// ── HUD & RESULTS ───────────────────────────────────────────────────────────────────
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+const mySeat = (m) => (m ? m.seats.findIndex((s) => s.i === net.sessionId) : -1);
+let board = null, resultsFor = -1, dropped = false, hintUntil = performance.now() + 16000, barKey = "";
+function hud(m, v) {
+  const t = Date.now(), seat = mySeat(m), tl = tally(v.own, v.cnt, v.groups, m.seats.length), total = Math.max(1, tl.reduce((n, x) => n + x.troops, 0));
+  const key = tl.map((x) => x.troops).join() + seat;
+  if (key !== barKey) {
+    barKey = key;
+    $("bar").innerHTML = m.seats.map((s, k) => `<i style="width:${(tl[k].troops / total) * 100}%;background:${s.c}"></i>`).join("");
+    $("chips").innerHTML = ATTRACT ? "" : m.seats.map((s, k) => `<span class="${k === seat ? "me" : ""} ${tl[k].alive ? "" : "out"}" style="--c:${s.c}"><b></b>${esc(k === seat ? "You" : s.n)} ${tl[k].troops}</span>`).join("");
+  }
+  const left = Math.max(0, m.endsAt - Math.max(t, m.startAt));
+  $("clock").textContent = m.phase === "over" ? "Done" : `${Math.floor(left / 60000)}:${String(Math.floor((left % 60000) / 1000)).padStart(2, "0")}`;
+  $("clock").hidden = ATTRACT;
+  $("count").textContent = ATTRACT ? "" : m.phase === "play" && t < m.startAt ? String(Math.ceil((m.startAt - t) / 1000)) : m.phase === "play" && t - m.startAt < 700 ? "Go!" : "";
+  $("hint").style.opacity = performance.now() < hintUntil && seat >= 0 && m.phase === "play" && !ATTRACT ? 1 : 0;
+  const out = m.phase === "play" && t > m.startAt && !ATTRACT && (seat < 0 || !tl[seat].alive);
+  $("banner").hidden = !out;
+  if (out) $("banner").textContent = seat < 0 ? "Watching: you'll get a seat when a bot's is free" : "You lost your last base. Watching until the match ends";
+  const n = livePlayers().length;
+  $("net").textContent = ATTRACT ? "" : net.offline ? "Offline: playing with bots" : dropped ? "Reconnecting…" : `Online · ${n} player${n === 1 ? "" : "s"}${isHost() ? " · you run the war" : ""}`;
+  $("over").hidden = m.phase !== "over" || ATTRACT;
+  if (m.phase === "over") {
+    $("next").textContent = `Next map in ${Math.max(0, Math.ceil((m.endsAt - t) / 1000))}s`;
+    if (resultsFor !== m.id) showResults(m, seat);
+  }
+}
+function showResults(m, seat) {
+  resultsFor = m.id;
+  const won = seat >= 0 && m.winner === seat, w = m.seats[m.winner];
+  $("overTitle").textContent = m.winner === -2 ? "Draw" : won ? "You win!" : `${w ? w.n : "Someone"} wins`;
+  $("overSub").textContent = m.why;
+  $("again").hidden = seat < 0; $("again").disabled = false; $("again").textContent = "Play again";
+  sel = []; target = -1; drag = null;
+  if (won) sound(520, 0.5, 0.3);
+  const list = $("board");
+  if (!board) { list.innerHTML = "<li>Leaderboards need a connection.</li>"; return; }
+  list.innerHTML = "<li>Loading…</li>";
+  (won ? board.submit(1, "inc").catch(() => null) : Promise.resolve()).then(() => board.top(10)).then(({ entries }) => {
+    list.innerHTML = entries.length ? entries.map((e) => `<li>${esc(e.username || "Player")}<span>${e.score}</span></li>`).join("") : "<li>No wins yet. Be the first.</li>";
+  }).catch(() => { list.innerHTML = "<li>Couldn't load the leaderboard.</li>"; });
+}
+$("again").onclick = () => {
+  const m = match(); if (!m || m.phase !== "over") return;
+  if (isHost()) hostAgain(net.sessionId, { m: m.id }); else net.send("again", { m: m.id });
+  $("again").disabled = true; $("again").textContent = "Waiting for the others…";
+};
+
+// ── INPUT ───────────────────────────────────────────────────────────────────────────
+// Press on one of your bases and drag to a target; passing over more of your bases adds them.
+// Or tap your base, then tap the target.
+let sel = [], target = -1, drag = null, pointer = null;
+function baseAt(X, Y) {
+  const m = match(), map = m && mapOf(m);
+  if (!map) return -1;
+  let best = -1, bd = Infinity;
+  map.forEach((b, i) => { const [x, y] = toScreen(b.x, b.y), d = Math.hypot(x - X, y - Y); if (d < Math.max(CONFIG.sizes[b.t].r * SC + 10, 26) && d < bd) { bd = d; best = i; } });
+  return best;
+}
+function ownerNow(i) { const m = match(), map = m && mapOf(m); return m && map ? viewOf(m, map, 0).own[i] : -1; }
+function canAct() { const m = match(); return m && m.phase === "play" && Date.now() >= m.startAt && mySeat(m) >= 0 && !ATTRACT; }
+/** Send half of every chosen base to `to`: an intent to the host (the host applies its own). */
+function sendTo(to) {
+  const m = match(), from = sel.filter((i) => i !== to);
+  sel = []; target = -1;
+  if (!from.length || !canAct()) return;
+  const msg = { m: m.id, from, to };
+  if (isHost()) applySend(mySeat(m), msg); else net.send("send", msg);
+  hintUntil = 0; sound(330, 0.08);
+}
+cv.addEventListener("pointerdown", (e) => {
+  e.preventDefault();
+  if (!actx) try { actx = new AudioContext(); } catch {}
+  pointer = { x: e.clientX, y: e.clientY };
+  if (!canAct()) return;
+  const i = baseAt(e.clientX, e.clientY), mineHere = i >= 0 && ownerNow(i) === mySeat(match());
+  if (sel.length && !drag && i >= 0 && !sel.includes(i)) { sendTo(i); return; } // second tap of tap-then-tap
+  if (mineHere) { drag = { sx: e.clientX, sy: e.clientY, moved: false, was: sel.slice() }; sel = [i]; target = -1; cv.setPointerCapture(e.pointerId); }
+  else { sel = []; target = -1; }
+});
+cv.addEventListener("pointermove", (e) => {
+  pointer = { x: e.clientX, y: e.clientY };
+  if (!drag) { if (sel.length) target = baseAt(e.clientX, e.clientY); return; }
+  if (Math.hypot(e.clientX - drag.sx, e.clientY - drag.sy) > 12) drag.moved = true;
+  const i = baseAt(e.clientX, e.clientY);
+  if (drag.moved && i >= 0 && !sel.includes(i) && ownerNow(i) === mySeat(match())) sel.push(i); // sweep over more of your bases
+  target = i;
+});
+cv.addEventListener("pointerup", (e) => {
+  if (!drag) return;
+  const d = drag; drag = null;
+  const i = baseAt(e.clientX, e.clientY);
+  if (!d.moved) { if (d.was.length === 1 && d.was[0] === sel[0]) sel = []; target = -1; return; } // a tap: keep it chosen (tap again to drop it)
+  if (i >= 0 && !(sel.length === 1 && sel[0] === i)) sendTo(i); else { sel = []; target = -1; }
+});
+cv.addEventListener("pointercancel", () => { drag = null; sel = []; target = -1; });
+addEventListener("keydown", (e) => { if (e.key === "Escape") { sel = []; target = -1; } });
+document.addEventListener("touchmove", (e) => e.preventDefault(), { passive: false });
+
+// ── MAIN LOOP ───────────────────────────────────────────────────────────────────────
+let myName = "", myColor = COLORS[0], last = performance.now(), lastHb = 0, lastHud = 0, seenMatch = -1;
+try { myName = localStorage.getItem("mpa-name") || ""; } catch {}
+const pickOne = (list) => list[Math.floor(Math.random() * list.length)];
+if (!myName) { myName = pickOne(NAME_A) + " " + pickOne(NAME_B); try { localStorage.setItem("mpa-name", myName); } catch {} }
+if (ATTRACT) {
+  Object.assign(CONFIG, { seats: 6, countdownMs: 0, startTroops: 40, speed: 190, botThinkMs: 600, botMinTroops: 16, neutralMin: 3, neutralMax: 12, resultsMs: 2500, matchMs: 90000 });
+  CONFIG.sizes.forEach((z) => { z.growMs *= 0.45; });
+  $("hint").style.display = "none";
+}
+/** Two players picked the same color at once (the room can look empty as you join): the later sessionId picks again. */
+function fixColor() {
+  const m = match(), others = Object.entries(S.entities.players || {}).filter(([id]) => id !== net.sessionId), bots = m ? m.seats.filter((s) => s.b).map((s) => s.c) : [];
+  if (!others.some(([id, p]) => id < net.sessionId && p.c === myColor) && !bots.includes(myColor)) return;
+  const used = new Set([...others.map(([, p]) => p.c), ...bots]), free = COLORS.find((c) => !used.has(c));
+  if (free && free !== myColor) { myColor = free; net.me.set("c", myColor); }
+}
+
+function frame(now) {
+  const dt = Math.max(0, Math.min(0.05, (now - last) / 1000)); last = now;
+  if (now - lastHb > 1000) { lastHb = now; net.me.set("hb", Date.now()); fixColor(); }
+  if (isHost()) hostTick(now); else { world.wasHost = false; host.last = null; }
+  const m = match(), map = mapOf(m);
+  if (m && map) {
+    if (seenMatch !== m.id) { seenMatch = m.id; sel = []; target = -1; drag = null; fx.own = null; fx.groups.clear(); groupViews.clear(); sparks.length = rings.length = pops.length = 0; hintUntil = performance.now() + 16000; }
+    const v = viewOf(m, map, dt);
+    effects(m, map, v, now);
+    draw(m, map, v, dt, now);
+    if (now - lastHud > 100) { lastHud = now; hud(m, v); }
+  }
+  requestAnimationFrame(frame);
+}
+
+(async function start() {
+  net = await connect();
+  net.onState((st) => { S = st; });
+  net.on("send", (d, from) => { if (isHost()) applySend(match()?.seats.findIndex((s) => s.i === from) ?? -1, d); });
+  net.on("again", (d, from) => { if (isHost()) hostAgain(from, d); });
+  net.onDisconnect(() => { dropped = true; $("net").textContent = "Reconnecting…"; });
+  net.onReconnect(() => { dropped = false; });
+  if (!net.offline && typeof MP !== "undefined") board = MP.auth({ key: MP_CONNECT.key, apiUrl: MP_CONNECT.apiUrl }).leaderboard(CONFIG.board);
+  const taken = new Set(Object.entries(S.entities.players || {}).filter(([id]) => id !== net.sessionId).map(([, p]) => p.c));
+  myColor = COLORS.find((c) => !taken.has(c)) || pickOne(COLORS);
+  net.me.set({ n: myName, c: myColor, hb: Date.now() });
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
