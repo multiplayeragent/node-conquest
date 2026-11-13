@@ -29,6 +29,7 @@
   .box h2 { margin: 0 0 4px; font-size: 26px; } .box p { margin: 0 0 12px; opacity: .85; }
   .box h3 { margin: 6px 0 4px; font-size: 13px; color: #ffd166; text-align: left; }
   .box ol { text-align: left; margin: 0 0 12px; padding-left: 24px; font-size: 14px; min-height: 30px; } .box li span { float: right; }
+  .box li.note { list-style: none; margin-left: -24px; text-align: center; opacity: .8; } /* a message, not a ranked row */
   .box button { width: 100%; min-height: 48px; border: 0; border-radius: 12px; background: #ffd166; color: #2a1d00; font: 800 16px system-ui, sans-serif; cursor: pointer; }
   .box small { display: block; margin-top: 8px; opacity: .6; font-size: 12px; }
 </style>
@@ -43,7 +44,7 @@
 <div id="net">Connecting…</div>
 <div id="over" hidden><div class="box">
   <h2 id="overTitle"></h2><p id="overSub"></p>
-  <h3>Most wins</h3><ol id="board"><li>Loading…</li></ol>
+  <h3>Most wins</h3><ol id="board"><li class="note">Loading…</li></ol>
   <button id="again">Play again</button><small id="next"></small>
 </div></div>
 <script>
@@ -597,11 +598,11 @@ function showResults(m, seat) {
   sel = []; target = -1; drag = null;
   if (won) sound(520, 0.5, 0.3);
   const list = $("board");
-  if (!board) { list.innerHTML = "<li>Leaderboards need a connection.</li>"; return; }
-  list.innerHTML = "<li>Loading…</li>";
+  if (!board) { list.innerHTML = "<li class='note'>Leaderboards need a connection.</li>"; return; }
+  list.innerHTML = "<li class='note'>Loading…</li>";
   (won ? board.submit(1, "inc").catch(() => null) : Promise.resolve()).then(() => board.top(10)).then(({ entries }) => {
-    list.innerHTML = entries.length ? entries.map((e) => `<li>${esc(e.username || "Player")}<span>${e.score}</span></li>`).join("") : "<li>No wins yet. Be the first.</li>";
-  }).catch(() => { list.innerHTML = "<li>Couldn't load the leaderboard.</li>"; });
+    list.innerHTML = entries.length ? entries.map((e) => `<li>${esc(e.username || "Player")}<span>${e.score}</span></li>`).join("") : "<li class='note'>No wins yet. Be the first.</li>";
+  }).catch(() => { list.innerHTML = "<li class='note'>Couldn't load the leaderboard.</li>"; });
 }
 $("again").onclick = () => {
   const m = match(); if (!m || m.phase !== "over") return;
@@ -633,6 +634,7 @@ function sendTo(to) {
 }
 cv.addEventListener("pointerdown", (e) => {
   e.preventDefault();
+  if (e.button !== 0) return; // left button or a touch only
   if (!actx) try { actx = new AudioContext(); } catch {}
   pointer = { x: e.clientX, y: e.clientY };
   if (!canAct()) return;
@@ -656,7 +658,9 @@ cv.addEventListener("pointerup", (e) => {
   if (!d.moved) { if (d.was.length === 1 && d.was[0] === sel[0]) sel = []; target = -1; return; } // a tap: keep it chosen (tap again to drop it)
   if (i >= 0 && !(sel.length === 1 && sel[0] === i)) sendTo(i); else { sel = []; target = -1; }
 });
+cv.addEventListener("contextmenu", (e) => e.preventDefault()); // no browser menu on right-click
 cv.addEventListener("pointercancel", () => { drag = null; sel = []; target = -1; });
+addEventListener("blur", () => { drag = null; sel = []; target = -1; }); // switching tabs mid-drag drops it
 addEventListener("keydown", (e) => { if (e.key === "Escape") { sel = []; target = -1; } });
 document.addEventListener("touchmove", (e) => e.preventDefault(), { passive: false });
 
